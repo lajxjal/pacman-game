@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>吃豆人 - Pac-Man</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    font-family: 'Press Start 2P', 'Courier New', monospace;
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #game-container {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    max-width: 560px;
+    padding: 10px 20px;
+    color: #fff;
+  }
+  .score-box { text-align: left; }
+  .score-box .label { font-size: 12px; color: #ff0; }
+  .score-box .value { font-size: 24px; color: #fff; }
+  .lives-box { text-align: right; }
+  .lives-box .label { font-size: 12px; color: #ff0; }
+  .lives-box .value { font-size: 24px; color: #fff; }
+  canvas {
+    border: 2px solid #2121DE;
+    border-radius: 4px;
+  }
+  #message {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #ff0;
+    font-size: 28px;
+    text-align: center;
+    pointer-events: none;
+    text-shadow: 2px 2px #000;
+  }
+  .controls {
+    color: #666;
+    margin-top: 15px;
+    font-size: 12px;
+    text-align: center;
+    line-height: 1.8;
+  }
+  .controls span { color: #ff0; }
+</style>
+</head>
+<body>
+<div id="game-container">
+  <div class="header">
+    <div class="score-box">
+      <div class="label">分数</div>
+      <div class="value" id="score">0</div>
+    </div>
+    <div class="score-box" style="text-align:center;">
+      <div class="label">最高分</div>
+      <div class="value" id="highScore">0</div>
+    </div>
+    <div class="lives-box">
+      <div class="label">生命</div>
+      <div class="value" id="lives">3</div>
+    </div>
+  </div>
+  <canvas id="canvas"></canvas>
+  <div id="message"></div>
+  <div class="controls">
+    方向键 <span>↑↓←→</span> 或 <span>WASD</span> 移动 &nbsp;|&nbsp;
+    <span>空格</span> 暂停 &nbsp;|&nbsp;
+    <span>R</span> 重新开始<br>
+    移动端触屏操控：点击画布上下左右区域
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+
+// --- 游戏常量 ---
+const TILE_SIZE = 20;
+const COLS = 28;
+const ROWS = 31;
+const WIDTH = COLS * TILE_SIZE;
+const HEIGHT = ROWS * TILE_SIZE;
+canvas.width = WIDTH;
+canvas.height = HEIGHT;
+
+const PACMAN_SPEED = 2;
+const GHOST_SPEED = 1.5;
+const FRIGHTENED_SPEED = 1;
+const FRIGHTENED_DURATION = 420; // 帧
+const SCATTER_DURATION = 420;
+const CHASE_DURATION = 1200;
+
+// --- 迷宫布局 ---
+// 0=空, 1=墙, 2=豆子, 3=能量豆, 4=鬼屋门
+const MAZE = [
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+  [1,2,2,2,2,2,2,2,2,2,2,2,2,1,1,2,2,2,2,2,2,2,2,2,2,2,2,1],
+  [1,2,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,2,1],
+  [1,3,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,3,1],
+  [1,2,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,2,1],
+  [1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1],
+  [1,2,1,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,1,2,1],
+  [1,2,1,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,1,2,1],
+  [1,2,2,2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2,2,2,1],
+  [1,1,1,1,1,1,2,1,1,1,1,1,0,1,1,0,1,1,1,1,1,2,1,1,1,1,1,1],
+  [0,0,0,0,0,1,2,1,1,1,1,1,0,1,1,0,1,1,1,1,1,2,1,0,0,0,0,0],
+  [0,0,0,0,0,1,2,1,1,0,0,0,0,0,0,0,0,0,0,1,1,2,1,0,0,0,0,0],
+  [0,0,0,0,0,1,2,1,1,0,1,1,1,4,4,1,1,1,0,1,1,2,1,0,0,0,0,0],
+  [1,1,1,1,1,1,2,1,1,0,1,0,0,0,0,0,0,1,0,1,1,2,1,1,1,1,1,1],
+  [0,0,0,0,0,0,2,0,0,0,1,0,0,0,0,0,0,1,0,0,0,2,0,0,0,0,0,0],
+  [1,1,1,1,1,1,2,1,1,0,1,0,0,0,0,0,0,1,0,1,1,2,1,1,1,1,1,1],
+  [0,0,0,0,0,1,2,1,1,0,1,1,1,1,1,1,1,1,0,1,1,2,1,0,0,0,0,0],
+  [0,0,0,0,0,1,2,1,1,0,0,0,0,0,0,0,0,0,0,1,1,2,1,0,0,0,0,0],
+  [0,0,0,0,0,1,2,1,1,0,1,1,1,1,1,1,1,1,0,1,1,2,1,0,0,0,0,0],
+  [1,1,1,1,1,1,2,1,1,0,1,1,1,1,1,1,1,1,0,1,1,2,1,1,1,1,1,1],
+  [1,2,2,2,2,2,2,2,2,2,2,2,2,1,1,2,2,2,2,2,2,2,2,2,2,2,2,1],
+  [1,2,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,2,1],
+  [1,2,1,1,1,1,2,1,1,1,1,1,2,1,1,2,1,1,1,1,1,2,1,1,1,1,2,1],
+  [1,3,2,2,1,1,2,2,2,2,2,2,2,0,0,2,2,2,2,2,2,2,1,1,2,2,3,1],
+  [1,1,1,2,1,1,2,1,1,2,1,1,1,1,1,1,1,1,2,1,1,2,1,1,2,1,1,1],
+  [1,1,1,2,1,1,2,1,1,2,1,1,1,1,1,1,1,1,2,1,1,2,1,1,2,1,1,1],
+  [1,2,2,2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2,1,1,2,2,2,2,2,2,1],
+  [1,2,1,1,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,1,1,2,1],
+  [1,2,1,1,1,1,1,1,1,1,1,1,2,1,1,2,1,1,1,1,1,1,1,1,1,1,2,1],
+  [1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1],
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+];
+
+// --- 音效（简易 Web Audio API） ---
+let audioCtx = null;
+function initAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+function playSound(freq, duration, type = 'square', vol = 0.05) {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration);
+}
+function sfxChomp() { playSound(600, 0.08, 'sawtooth', 0.03); }
+function sfxPower() { playSound(200, 0.3, 'sine', 0.06); }
+function sfxEatGhost() { playSound(800, 0.15, 'square', 0.06); playSound(1000, 0.15, 'square', 0.05); }
+function sfxDeath() {
+  [400,350,300,250,200,150,100].forEach((f, i) => setTimeout(() => playSound(f, 0.2, 'sawtooth', 0.06), i*150));
+}
+
+// --- 游戏状态 ---
+let score = 0;
+let highScore = parseInt(localStorage.getItem('pacmanHighScore')) || 0;
+let lives = 3;
+let dotsRemaining = 0;
+let frightenedTimer = 0;
+let ghostMode = 'scatter'; // scatter | chase
+let modeTimer = 0;
+let paused = false;
+let gameOver = false;
+let gameWin = false;
+let frameCount = 0;
+let animationId = null;
+
+document.getElementById('highScore').textContent = highScore;
+
+// --- 实体类 ---
+class Entity {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+    this.dir = { x: 0, y: 0 };
+    this.nextDir = { x: 0, y: 0 };
+  }
+}
+
+class Pacman extends Entity {
+  constructor() {
+    super(14, 23);
+    this.mouthAngle = 0.25;
+    this.mouthOpen = true;
+    this.animTimer = 0;
+  }
+
+  update() {
+    // 尝试转向
+    if (this.nextDir.x !== 0 || this.nextDir.y !== 0) {
+      const nx = this.x + this.nextDir.x * PACMAN_SPEED;
+      const ny = this.y + this.nextDir.y * PACMAN_SPEED;
+      if (!isWall(nx, ny)) {
+        this.dir = { ...this.nextDir };
+      }
+    }
+
+    // 移动
+    const nx = this.x + this.dir.x * PACMAN_SPEED;
+    const ny = this.y + this.dir.y * PACMAN_SPEED;
+    if (!isWall(nx, ny)) {
+      this.x = nx;
+      this.y = ny;
+    }
+
+    // 隧道
+    if (this.x < -0.5) this.x = COLS - 0.5;
+    if (this.x > COLS - 0.5) this.x = -0.5;
+
+    // 嘴动画
+    this.animTimer++;
+    if (this.animTimer >= 4) {
+      this.animTimer = 0;
+      this.mouthOpen = !this.mouthOpen;
+      if (this.dir.x === 0 && this.dir.y === 0) this.mouthAngle = 0.25;
+      else this.mouthAngle = this.mouthOpen ? 0.25 : 0.05;
+    }
+
+    // 吃豆子
+    const col = Math.round(this.x);
+    const row = Math.round(this.y);
+    if (col >= 0 && col < COLS && row >= 0 && row < ROWS) {
+      if (MAZE[row][col] === 2) {
+        MAZE[row][col] = 0;
+        score += 10;
+        dotsRemaining--;
+        sfxChomp();
+      } else if (MAZE[row][col] === 3) {
+        MAZE[row][col] = 0;
+        score += 50;
+        dotsRemaining--;
+        frightenedTimer = FRIGHTENED_DURATION;
+        sfxPower();
+      }
+    }
+  }
+
+  draw() {
+    const cx = this.x * TILE_SIZE + TILE_SIZE / 2;
+    const cy = this.y * TILE_SIZE + TILE_SIZE / 2;
+    let angle = 0;
+    if (this.dir.x === 1) angle = 0;
+    else if (this.dir.x === -1) angle = Math.PI;
+    else if (this.dir.y === -1) angle = -Math.PI / 2;
+    else if (this.dir.y === 1) angle = Math.PI / 2;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.fillStyle = '#FFFF00';
+    ctx.beginPath();
+    ctx.arc(0, 0, TILE_SIZE / 2 - 1, this.mouthAngle * Math.PI, (2 - this.mouthAngle) * Math.PI);
+    ctx.lineTo(0, 0);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+class Ghost extends Entity {
+  constructor(x, y, color, index) {
+    super(x, y);
+    this.color = color;
+    this.index = index;
+    this.scatterTarget = [
+      { x: 25, y: -2 },  // Blinky - 右上角
+      { x: 2, y: -2 },    // Pinky - 左上角
+      { x: 25, y: ROWS + 1 }, // Inky - 右下角
+      { x: 2, y: ROWS + 1 },  // Clyde - 左下角
+    ][index];
+    this.inHouse = index > 0;
+    this.houseTimer = index * 60;
+  }
+
+  update(blinky) {
+    if (this.inHouse) {
+      this.houseTimer--;
+      if (this.houseTimer <= 0) {
+        // 从鬼屋出来
+        this.x = 13.5;
+        this.y = 11;
+        this.inHouse = false;
+        this.dir = { x: (Math.random() > 0.5 ? 1 : -1), y: 0 };
+      } else {
+        // 在鬼屋里上下浮动
+        this.y = 12 + Math.sin(frameCount * 0.1 + this.index) * 1;
+        return;
+      }
+    }
+
+    const speed = frightenedTimer > 0 ? FRIGHTENED_SPEED : GHOST_SPEED;
+
+    // 在十字路口选择方向
+    const col = Math.round(this.x);
+    const row = Math.round(this.y);
+    const atIntersection = (Math.abs(this.x - col) < 0.1 && Math.abs(this.y - row) < 0.1);
+
+    if (atIntersection) {
+      const dirs = getAvailableDirs(col, row, this.dir);
+      if (dirs.length > 1) {
+        // 不能掉头（除非是被吃后）
+        const reverse = { x: -this.dir.x, y: -this.dir.y };
+        const filtered = dirs.filter(d => !(d.x === reverse.x && d.y === reverse.y));
+        const choices = filtered.length > 0 ? filtered : dirs;
+
+        let target;
+        if (frightenedTimer > 0) {
+          // 受惊模式：随机移动
+          this.dir = choices[Math.floor(Math.random() * choices.length)];
+        } else if (ghostMode === 'scatter') {
+          target = this.scatterTarget;
+          this.dir = bestDir(choices, this, target);
+        } else {
+          // 追逐模式 - 经典AI
+          target = this.getChaseTarget(blinky);
+          this.dir = bestDir(choices, this, target);
+        }
+      } else if (dirs.length === 1) {
+        this.dir = dirs[0];
+      }
+    }
+
+    const nx = this.x + this.dir.x * speed;
+    const ny = this.y + this.dir.y * speed;
+    if (!isWall(nx, ny) && !isHouseDoor(nx, ny)) {
+      this.x = nx;
+      this.y = ny;
+    }
+
+    // 隧道
+    if (this.x < -0.5) this.x = COLS - 0.5;
+    if (this.x > COLS - 0.5) this.x = -0.5;
+  }
+
+  getChaseTarget(blinky) {
+    switch (this.index) {
+      case 0: // Blinky - 直接追踪吃豆人
+        return { x: pacman.x, y: pacman.y };
+      case 1: // Pinky - 瞄准吃豆人前方4格
+        return {
+          x: pacman.x + pacman.dir.x * 4,
+          y: pacman.y + pacman.dir.y * 4,
+        };
+      case 2: // Inky - 使用Blinky的位置做镜像
+        return {
+          x: pacman.x + (pacman.x - blinky.x) * 2,
+          y: pacman.y + (pacman.y - blinky.y) * 2,
+        };
+      case 3: // Clyde - 近距离散开，远距离追踪
+        const dist = Math.hypot(this.x - pacman.x, this.y - pacman.y);
+        if (dist < 8) return this.scatterTarget;
+        return { x: pacman.x, y: pacman.y };
+    }
+  }
+
+  draw() {
+    const cx = this.x * TILE_SIZE + TILE_SIZE / 2;
+    const cy = this.y * TILE_SIZE + TILE_SIZE / 2;
+    const r = TILE_SIZE / 2 - 1;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    // 身体颜色
+    if (frightenedTimer > 0) {
+      ctx.fillStyle = frightenedTimer < 120 && frameCount % 20 < 10 ? '#FFFFFF' : '#2121DE';
+    } else {
+      ctx.fillStyle = this.color;
+    }
+
+    // 画身体（弧形顶部 + 波浪底部）
+    ctx.beginPath();
+    ctx.arc(0, -2, r, Math.PI, 0);
+    // 波浪裙摆
+    const waveCount = 3;
+    const waveWidth = (r * 2) / waveCount;
+    const waveY = r - 2;
+    for (let i = 0; i < waveCount; i++) {
+      const sx = -r + i * waveWidth;
+      const ex = sx + waveWidth;
+      const waveHeight = Math.sin(frameCount * 0.2 + i + this.index) * 3 + 3;
+      ctx.lineTo(sx + waveWidth / 2, waveY + waveHeight);
+      ctx.lineTo(ex, waveY);
+    }
+    ctx.lineTo(r, -2);
+    ctx.fill();
+
+    // 眼睛
+    if (frightenedTimer > 0) {
+      // 受惊表情
+      ctx.fillStyle = '#FFF';
+      ctx.beginPath(); ctx.arc(-4, -3, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(4, -3, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.arc(-4, -3, 1.2, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(4, -3, 1.2, 0, Math.PI * 2); ctx.fill();
+      // 小嘴
+      ctx.strokeStyle = '#FFF';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(-2, 2);
+      for (let i = -2; i <= 2; i++) {
+        ctx.lineTo(i, 2 + Math.sin(i * 1.2) * 1.5);
+      }
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = '#FFF';
+      ctx.beginPath(); ctx.arc(-4, -3, 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(4, -3, 3.5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#00F';
+      ctx.beginPath();
+      const ex = -4 + this.dir.x * 1.5;
+      const ey = -3 + this.dir.y * 1.5;
+      ctx.arc(ex, ey, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      const ex2 = 4 + this.dir.x * 1.5;
+      const ey2 = -3 + this.dir.y * 1.5;
+      ctx.arc(ex2, ey2, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+// --- 辅助函数 ---
+function isWall(x, y) {
+  const col = Math.round(x);
+  const row = Math.round(y);
+  if (col < 0 || col >= COLS || row < 0 || row >= ROWS) return false; // 隧道
+  return MAZE[row][col] === 1;
+}
+
+function isHouseDoor(x, y) {
+  const col = Math.round(x);
+  const row = Math.round(y);
+  return MAZE[row] && MAZE[row][col] === 4;
+}
+
+function getAvailableDirs(col, row, currentDir) {
+  const dirs = [
+    { x: 0, y: -1 },
+    { x: 0, y: 1 },
+    { x: -1, y: 0 },
+    { x: 1, y: 0 },
+  ];
+  return dirs.filter(d => {
+    const nx = col + d.x;
+    const ny = row + d.y;
+    if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) return true; // 隧道
+    return MAZE[ny][nx] !== 1;
+  });
+}
+
+function bestDir(choices, ghost, target) {
+  let best = choices[0];
+  let bestDist = Infinity;
+  for (const d of choices) {
+    const nx = ghost.x + d.x;
+    const ny = ghost.y + d.y;
+    const dist = Math.hypot(nx - target.x, ny - target.y);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = d;
+    }
+  }
+  return best;
+}
+
+function resetMaze() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (MAZE_ORIG[r][c] === 2 || MAZE_ORIG[r][c] === 3) {
+        MAZE[r][c] = MAZE_ORIG[r][c];
+      }
+    }
+  }
+}
+
+// --- 初始化 ---
+let MAZE_ORIG = MAZE.map(row => [...row]);
+let pacman, ghosts;
+
+function countDots() {
+  let count = 0;
+  for (let r = 0; r < ROWS; r++)
+    for (let c = 0; c < COLS; c++)
+      if (MAZE[r][c] === 2 || MAZE[r][c] === 3) count++;
+  return count;
+}
+
+function initGame() {
+  resetMaze();
+  pacman = new Pacman();
+  ghosts = [
+    new Ghost(13.5, 11, '#FF0000', 0), // Blinky
+    new Ghost(13.5, 13, '#FFB8FF', 1), // Pinky
+    new Ghost(11.5, 13, '#00FFFF', 2), // Inky
+    new Ghost(15.5, 13, '#FFB852', 3), // Clyde
+  ];
+  dotsRemaining = countDots();
+  frightenedTimer = 0;
+  ghostMode = 'scatter';
+  modeTimer = 0;
+  paused = false;
+  gameOver = false;
+  gameWin = false;
+  document.getElementById('message').textContent = '';
+}
+
+// --- 绘制 ---
+function drawMaze() {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const x = c * TILE_SIZE;
+      const y = r * TILE_SIZE;
+      if (MAZE[r][c] === 1) {
+        ctx.fillStyle = '#2121DE';
+        ctx.fillRect(x, y, TILE_SIZE, TILE_SIZE);
+        // 内部阴影
+        ctx.fillStyle = '#0000AA';
+        ctx.fillRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
+        ctx.fillStyle = '#2121DE';
+        ctx.fillRect(x + 4, y + 4, TILE_SIZE - 8, TILE_SIZE - 8);
+      } else if (MAZE[r][c] === 2) {
+        ctx.fillStyle = '#FFB8AE';
+        ctx.beginPath();
+        ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (MAZE[r][c] === 3) {
+        const pulse = Math.sin(frameCount * 0.1) * 2 + 5;
+        ctx.fillStyle = '#FFB8AE';
+        ctx.beginPath();
+        ctx.arc(x + TILE_SIZE / 2, y + TILE_SIZE / 2, pulse, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (MAZE[r][c] === 4) {
+        ctx.fillStyle = '#FFB8FF';
+        ctx.fillRect(x, y + TILE_SIZE / 2 - 2, TILE_SIZE, 4);
+      }
+    }
+  }
+}
+
+// --- 碰撞检测 ---
+function checkCollisions() {
+  for (const ghost of ghosts) {
+    if (ghost.inHouse) continue;
+    const dist = Math.hypot(pacman.x - ghost.x, pacman.y - ghost.y);
+    if (dist < 0.8) {
+      if (frightenedTimer > 0) {
+        // 吃掉鬼
+        score += 200;
+        ghost.x = 13.5;
+        ghost.y = 13;
+        ghost.inHouse = true;
+        ghost.houseTimer = 60;
+        sfxEatGhost();
+      } else {
+        // 被鬼抓住
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// --- 主循环 ---
+function gameLoop() {
+  if (paused || gameOver || gameWin) {
+    animationId = requestAnimationFrame(gameLoop);
+    return;
+  }
+
+  frameCount++;
+
+  // 模式切换
+  modeTimer++;
+  if (frightenedTimer > 0) {
+    frightenedTimer--;
+  } else {
+    if (ghostMode === 'scatter' && modeTimer > SCATTER_DURATION) {
+      ghostMode = 'chase';
+      modeTimer = 0;
+    } else if (ghostMode === 'chase' && modeTimer > CHASE_DURATION) {
+      ghostMode = 'scatter';
+      modeTimer = 0;
+    }
+  }
+
+  // 更新
+  pacman.update();
+  const blinky = ghosts[0];
+  for (const ghost of ghosts) ghost.update(blinky);
+
+  // 碰撞
+  if (checkCollisions()) {
+    lives--;
+    sfxDeath();
+    updateUI();
+    if (lives <= 0) {
+      gameOver = true;
+      document.getElementById('message').textContent = '游戏结束!';
+      if (score > highScore) {
+        highScore = score;
+        localStorage.setItem('pacmanHighScore', highScore);
+        document.getElementById('highScore').textContent = highScore;
+      }
+    } else {
+      // 重置位置
+      pacman = new Pacman();
+      ghosts.forEach((g, i) => {
+        g.x = i === 0 ? 13.5 : [13.5, 11.5, 15.5][i] || 13.5;
+        g.y = i === 0 ? 11 : [13, 13, 13][i] || 13;
+        g.inHouse = i > 0;
+        g.houseTimer = i * 60;
+        g.dir = { x: 0, y: 0 };
+      });
+      frightenedTimer = 0;
+      ghostMode = 'scatter';
+      modeTimer = 0;
+    }
+  }
+
+  // 胜利检测
+  if (dotsRemaining <= 0) {
+    gameWin = true;
+    score += 1000; // 通关奖励
+    document.getElementById('message').textContent = '恭喜通关! 🎉';
+    if (score > highScore) {
+      highScore = score;
+      localStorage.setItem('pacmanHighScore', highScore);
+      document.getElementById('highScore').textContent = highScore;
+    }
+  }
+
+  updateUI();
+
+  // 渲染
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+  drawMaze();
+
+  if (!gameOver && !gameWin) {
+    pacman.draw();
+    for (const ghost of ghosts) ghost.draw();
+  }
+
+  animationId = requestAnimationFrame(gameLoop);
+}
+
+function updateUI() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('lives').textContent = lives;
+}
+
+// --- 输入处理 ---
+function setDirection(dx, dy) {
+  initAudio();
+  pacman.nextDir = { x: dx, y: dy };
+  // 如果当前在重置状态，开始移动
+  if (pacman.dir.x === 0 && pacman.dir.y === 0) {
+    const nx = pacman.x + dx * PACMAN_SPEED;
+    const ny = pacman.y + dy * PACMAN_SPEED;
+    if (!isWall(nx, ny)) {
+      pacman.dir = { x: dx, y: dy };
+    }
+  }
+}
+
+document.addEventListener('keydown', e => {
+  switch (e.key) {
+    case 'ArrowUp': case 'w': case 'W': e.preventDefault(); setDirection(0, -1); break;
+    case 'ArrowDown': case 's': case 'S': e.preventDefault(); setDirection(0, 1); break;
+    case 'ArrowLeft': case 'a': case 'A': e.preventDefault(); setDirection(-1, 0); break;
+    case 'ArrowRight': case 'd': case 'D': e.preventDefault(); setDirection(1, 0); break;
+    case ' ': e.preventDefault(); if (!gameOver && !gameWin) paused = !paused; break;
+    case 'r': case 'R': e.preventDefault(); score = 0; lives = 3; initGame(); updateUI(); break;
+  }
+});
+
+// 触摸控制
+canvas.addEventListener('click', e => {
+  initAudio();
+  if (gameOver || gameWin) {
+    score = 0; lives = 3; initGame(); updateUI(); return;
+  }
+  const rect = canvas.getBoundingClientRect();
+  const cx = e.clientX - rect.left;
+  const cy = e.clientY - rect.top;
+  const scaleX = WIDTH / rect.width;
+  const scaleY = HEIGHT / rect.height;
+  const tx = cx * scaleX;
+  const ty = cy * scaleY;
+  const px = pacman.x * TILE_SIZE;
+  const py = pacman.y * TILE_SIZE;
+
+  const dx = tx - px;
+  const dy = ty - py;
+
+  if (Math.abs(dx) > Math.abs(dy)) {
+    setDirection(dx > 0 ? 1 : -1, 0);
+  } else {
+    setDirection(0, dy > 0 ? 1 : -1);
+  }
+});
+
+// --- 启动 ---
+initGame();
+updateUI();
+gameLoop();
+</script>
+</body>
+</html>
