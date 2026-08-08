@@ -181,6 +181,7 @@ let modeTimer = 0;
 let paused = false;
 let gameOver = false;
 let gameWin = false;
+let deathTimer = 0;
 let frameCount = 0;
 let animationId = null;
 
@@ -311,7 +312,7 @@ class Ghost extends Entity {
     // 在十字路口选择方向
     const col = Math.round(this.x);
     const row = Math.round(this.y);
-    const atIntersection = (Math.abs(this.x - col) < 0.1 && Math.abs(this.y - row) < 0.1);
+    const atIntersection = (Math.abs(this.x - col) < 0.5 && Math.abs(this.y - row) < 0.5);
 
     if (atIntersection) {
       const dirs = getAvailableDirs(col, row, this.dir);
@@ -466,7 +467,7 @@ function getAvailableDirs(col, row, currentDir) {
     const nx = col + d.x;
     const ny = row + d.y;
     if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) return true; // 隧道
-    return MAZE[ny][nx] !== 1;
+    return MAZE[ny][nx] !== 1 && MAZE[ny][nx] !== 4; // 排除墙壁和鬼屋门
   });
 }
 
@@ -523,6 +524,7 @@ function initGame() {
   paused = false;
   gameOver = false;
   gameWin = false;
+  deathTimer = 0;
   document.getElementById('message').textContent = '';
 }
 
@@ -584,82 +586,91 @@ function checkCollisions() {
 
 // --- 主循环 ---
 function gameLoop() {
-  if (paused || gameOver || gameWin) {
-    animationId = requestAnimationFrame(gameLoop);
-    return;
-  }
-
-  frameCount++;
-
-  // 模式切换
-  modeTimer++;
-  if (frightenedTimer > 0) {
-    frightenedTimer--;
-  } else {
-    if (ghostMode === 'scatter' && modeTimer > SCATTER_DURATION) {
-      ghostMode = 'chase';
-      modeTimer = 0;
-    } else if (ghostMode === 'chase' && modeTimer > CHASE_DURATION) {
-      ghostMode = 'scatter';
-      modeTimer = 0;
-    }
-  }
-
-  // 更新
-  pacman.update();
-  const blinky = ghosts[0];
-  for (const ghost of ghosts) ghost.update(blinky);
-
-  // 碰撞
-  if (checkCollisions()) {
-    lives--;
-    sfxDeath();
-    updateUI();
-    if (lives <= 0) {
-      gameOver = true;
-      document.getElementById('message').textContent = '游戏结束!';
-      if (score > highScore) {
-        highScore = score;
-        localStorage.setItem('pacmanHighScore', highScore);
-        document.getElementById('highScore').textContent = highScore;
+  if (!gameOver && !gameWin) {
+    if (deathTimer > 0) {
+      // 死亡动画：冻结画面并倒计时
+      deathTimer--;
+      if (deathTimer === 0) {
+        if (lives <= 0) {
+          gameOver = true;
+          document.getElementById('message').textContent = '游戏结束! 按 R 重新开始';
+          if (score > highScore) {
+            highScore = score;
+            localStorage.setItem('pacmanHighScore', highScore);
+            document.getElementById('highScore').textContent = highScore;
+          }
+        } else {
+          // 重置位置
+          pacman = new Pacman();
+          ghosts.forEach((g, i) => {
+            g.x = i === 0 ? 13.5 : [13.5, 11.5, 15.5][i - 1];
+            g.y = i === 0 ? 11 : 13;
+            g.inHouse = i > 0;
+            g.houseTimer = i * 60;
+            g.dir = { x: 0, y: 0 };
+          });
+          frightenedTimer = 0;
+          ghostMode = 'scatter';
+          modeTimer = 0;
+          document.getElementById('message').textContent = '';
+        }
       }
-    } else {
-      // 重置位置
-      pacman = new Pacman();
-      ghosts.forEach((g, i) => {
-        g.x = i === 0 ? 13.5 : [13.5, 11.5, 15.5][i] || 13.5;
-        g.y = i === 0 ? 11 : [13, 13, 13][i] || 13;
-        g.inHouse = i > 0;
-        g.houseTimer = i * 60;
-        g.dir = { x: 0, y: 0 };
-      });
-      frightenedTimer = 0;
-      ghostMode = 'scatter';
-      modeTimer = 0;
+    } else if (!paused) {
+      frameCount++;
+
+      // 模式切换
+      modeTimer++;
+      if (frightenedTimer > 0) {
+        frightenedTimer--;
+      } else {
+        if (ghostMode === 'scatter' && modeTimer > SCATTER_DURATION) {
+          ghostMode = 'chase';
+          modeTimer = 0;
+        } else if (ghostMode === 'chase' && modeTimer > CHASE_DURATION) {
+          ghostMode = 'scatter';
+          modeTimer = 0;
+        }
+      }
+
+      // 更新
+      pacman.update();
+      const blinky = ghosts[0];
+      for (const ghost of ghosts) ghost.update(blinky);
+
+      // 碰撞
+      if (checkCollisions()) {
+        lives--;
+        sfxDeath();
+        updateUI();
+        deathTimer = 45;
+      }
+
+      // 胜利检测
+      if (dotsRemaining <= 0) {
+        gameWin = true;
+        score += 1000; // 通关奖励
+        document.getElementById('message').textContent = '恭喜通关! 🎉 按 R 重新开始';
+        if (score > highScore) {
+          highScore = score;
+          localStorage.setItem('pacmanHighScore', highScore);
+          document.getElementById('highScore').textContent = highScore;
+        }
+      }
+
+      updateUI();
     }
   }
 
-  // 胜利检测
-  if (dotsRemaining <= 0) {
-    gameWin = true;
-    score += 1000; // 通关奖励
-    document.getElementById('message').textContent = '恭喜通关! 🎉';
-    if (score > highScore) {
-      highScore = score;
-      localStorage.setItem('pacmanHighScore', highScore);
-      document.getElementById('highScore').textContent = highScore;
-    }
-  }
-
-  updateUI();
-
-  // 渲染
+  // 渲染（始终执行，不再提前返回）
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, WIDTH, HEIGHT);
   drawMaze();
 
-  if (!gameOver && !gameWin) {
-    pacman.draw();
+  if (!gameOver) {
+    // 死亡时吃豆人闪烁
+    if (deathTimer === 0 || Math.floor(deathTimer / 6) % 2 === 0) {
+      pacman.draw();
+    }
     for (const ghost of ghosts) ghost.draw();
   }
 
@@ -691,8 +702,16 @@ document.addEventListener('keydown', e => {
     case 'ArrowDown': case 's': case 'S': e.preventDefault(); setDirection(0, 1); break;
     case 'ArrowLeft': case 'a': case 'A': e.preventDefault(); setDirection(-1, 0); break;
     case 'ArrowRight': case 'd': case 'D': e.preventDefault(); setDirection(1, 0); break;
-    case ' ': e.preventDefault(); if (!gameOver && !gameWin) paused = !paused; break;
-    case 'r': case 'R': e.preventDefault(); score = 0; lives = 3; initGame(); updateUI(); break;
+    case ' ': e.preventDefault();
+      if (!gameOver && !gameWin && deathTimer === 0) {
+        paused = !paused;
+        document.getElementById('message').textContent = paused ? '⏸ 暂停' : '';
+      }
+      break;
+    case 'r': case 'R': e.preventDefault();
+      score = 0; lives = 3; deathTimer = 0; initGame(); updateUI();
+      document.getElementById('message').textContent = '';
+      break;
   }
 });
 
@@ -700,7 +719,9 @@ document.addEventListener('keydown', e => {
 canvas.addEventListener('click', e => {
   initAudio();
   if (gameOver || gameWin) {
-    score = 0; lives = 3; initGame(); updateUI(); return;
+    score = 0; lives = 3; deathTimer = 0; initGame(); updateUI();
+    document.getElementById('message').textContent = '';
+    return;
   }
   const rect = canvas.getBoundingClientRect();
   const cx = e.clientX - rect.left;
